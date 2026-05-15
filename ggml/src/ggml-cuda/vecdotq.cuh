@@ -506,6 +506,25 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_impl_vmmq(
     const int * __restrict__ v, const int * __restrict__ u, const uint8_t * __restrict__ sc,
     const uint8_t * __restrict__ m, const half2 & dm4, const float * __restrict__ d8) {
 
+#if __CUDA_ARCH__ == 860
+    // sm_86 (CMP 90HX): FFMA throttled 14×; use HFMA2 (unthrottled 1.4 ns) for accumulation
+    // dm4 applied inside loop keeps intermediates within float16 range (max ~9601 < 65504)
+    half2 h2_acc = __float2half2_rn(0.0f);
+#pragma unroll
+    for (int i = 0; i < QR4_K; ++i) {
+        const int v0i = (v[0] >> (4*i)) & 0x0F0F0F0F;
+        const int v1i = (v[1] >> (4*i)) & 0x0F0F0F0F;
+
+        const int dot1 = ggml_cuda_dp4a(v1i, u[2*i+1], ggml_cuda_dp4a(v0i, u[2*i+0], 0));
+        const int dot2 = ggml_cuda_dp4a(0x01010101, u[2*i+1], ggml_cuda_dp4a(0x01010101, u[2*i+0], 0));
+
+        const half2 h2_sc_m  = __hmul2(dm4, make_half2(__uint2half_rn(sc[i]), __uint2half_rn(m[i])));
+        const half2 h2_d8    = __float2half2_rn(d8[i]);
+        const half2 h2_coeff = __hmul2(h2_sc_m, h2_d8);
+        h2_acc = __hfma2(h2_coeff, make_half2(__int2half_rn(dot1), __int2half_rn(dot2)), h2_acc);
+    }
+    return __half2float(__low2half(h2_acc)) - __half2float(__high2half(h2_acc));
+#else
     float sumf_d = 0.0f;
     float sumf_m = 0.0f;
 
@@ -524,6 +543,7 @@ static __device__ __forceinline__ float vec_dot_q4_K_q8_1_impl_vmmq(
     const float2 dm4f = __half22float2(dm4);
 
     return dm4f.x*sumf_d - dm4f.y*sumf_m;
+#endif
 }
 
 // contiguous v/x + u/y values
@@ -562,6 +582,30 @@ static __device__ __forceinline__ float vec_dot_q5_K_q8_1_impl_vmmq(
     const int * __restrict__ vl, const int * __restrict__ vh, const int * __restrict__ u, const uint8_t * __restrict__ sc,
     const uint8_t * __restrict__ m, const half2 & dm5, const float * __restrict__ d8) {
 
+#if __CUDA_ARCH__ == 860
+    // sm_86 (CMP 90HX): FFMA throttled 14×; use HFMA2 (unthrottled 1.4 ns) for accumulation
+    half2 h2_acc = __float2half2_rn(0.0f);
+#pragma unroll
+    for (int i = 0; i < QR5_K; ++i) {
+        const int vl0i = (vl[0] >> (4*i)) & 0x0F0F0F0F;
+        const int vl1i = (vl[1] >> (4*i)) & 0x0F0F0F0F;
+
+        const int vh0i = ((vh[0] >> i) << 4) & 0x10101010;
+        const int vh1i = ((vh[1] >> i) << 4) & 0x10101010;
+
+        const int v0i = vl0i | vh0i;
+        const int v1i = vl1i | vh1i;
+
+        const int dot1 = ggml_cuda_dp4a(v0i, u[2*i+0], ggml_cuda_dp4a(v1i, u[2*i+1], 0));
+        const int dot2 = ggml_cuda_dp4a(0x01010101, u[2*i+0], ggml_cuda_dp4a(0x01010101, u[2*i+1], 0));
+
+        const half2 h2_sc_m  = __hmul2(dm5, make_half2(__uint2half_rn(sc[i]), __uint2half_rn(m[i])));
+        const half2 h2_d8    = __float2half2_rn(d8[i]);
+        const half2 h2_coeff = __hmul2(h2_sc_m, h2_d8);
+        h2_acc = __hfma2(h2_coeff, make_half2(__int2half_rn(dot1), __int2half_rn(dot2)), h2_acc);
+    }
+    return __half2float(__low2half(h2_acc)) - __half2float(__high2half(h2_acc));
+#else
     float sumf_d = 0.0f;
     float sumf_m = 0.0f;
 
@@ -587,6 +631,7 @@ static __device__ __forceinline__ float vec_dot_q5_K_q8_1_impl_vmmq(
     const float2 dm5f = __half22float2(dm5);
 
     return dm5f.x*sumf_d - dm5f.y*sumf_m;
+#endif
 }
 
 // contiguous v/x + u/y values
