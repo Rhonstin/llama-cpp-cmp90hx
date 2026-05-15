@@ -173,7 +173,8 @@ CUDA_VISIBLE_DEVICES=<cmp90hx_pci> llama-server \
 
 | File | Contents |
 |---|---|
-| [GEMMA_E4B_BENCH.md](GEMMA_E4B_BENCH.md) | gemma4 E4B — patch comparison + TurboQuant KV |
+| [GEMMA_E4B_BENCH.md](GEMMA_E4B_BENCH.md) | gemma4 E4B Q5_K-Medium — patch comparison + TurboQuant KV |
+| [GEMMA_E4B_Q6K_BENCH.md](GEMMA_E4B_Q6K_BENCH.md) | gemma4 E4B Q6_K — Tier 1 Q6K patch isolated benchmark |
 | [TURBOQUANT_BENCH.md](TURBOQUANT_BENCH.md) | TurboQuant KV sweep (f16 / q8_0 / turbo3) |
 | [QWEN35_9B_BENCH.md](QWEN35_9B_BENCH.md) | Qwen3.5-9B — patches, TurboQuant, NextN |
 | [QWEN36_35B_BENCH.md](QWEN36_35B_BENCH.md) | Qwen3.6-35B — ncmoe scan, patches, NextN |
