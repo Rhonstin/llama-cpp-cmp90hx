@@ -1,3 +1,61 @@
+# llama.cpp — CMP 90HX Optimization
+
+> **Branch `cmp90hx-optimizations`** — patches llama.cpp to run efficiently on the
+> NVIDIA CMP 90HX (GA102, sm_86). Replaces throttled instructions (DP4A, FP32 FFMA)
+> with unthrottled equivalents (IMAD, HFMA2), recovering **+57–87% decode throughput**
+> on fully GPU-resident models.
+>
+> → Full benchmark results and analysis: [`bench/cmp90hx/`](bench/cmp90hx/)
+>
+> Based on [AtomicBot-ai/atomic-llama-cpp-turboquant](https://github.com/AtomicBot-ai/atomic-llama-cpp-turboquant).
+
+---
+
+## CMP 90HX — Why and What
+
+The CMP 90HX shares the GA102 die with the RTX 3090 but has firmware-throttled arithmetic:
+
+| Instruction | Latency | Used by stock llama.cpp |
+|---|---:|---|
+| FFMA (FP32) | 17.8 ns — **14× slow** | dequantization |
+| DP4A (INT8) | 35.6 ns — **29× slow** | quantized dot products |
+| **IMAD** (INT) | **1.4 ns — free** | our replacement |
+| **HFMA2** (FP16×2) | **1.4 ns — free** | our replacement |
+
+### Patches (sm_86 only)
+
+| Commit | File | Change |
+|---|---|---|
+| `3d8c364bc` | `ggml/src/ggml-cuda/common.cuh` | `__dp4a` → PTX IMAD |
+| `a5df16302` | `ggml/src/ggml-cuda/vecdotq.cuh` | FP32 accumulation → HFMA2 |
+| `e7b5d6bed` | `ggml/src/ggml-cuda/fattn.cu` | DKQ=512 → tile kernel (Gemma MTP fix) |
+
+### Benchmark results
+
+| Model | Quant | Without patches | With patches | Speedup |
+|---|---|---:|---:|---:|
+| Qwen3.5-9B (100% GPU) | Q4_K_XL | 30.4 tok/s | **56.9 tok/s** | **+87%** |
+| gemma4 E4B (100% GPU) | Q5_K | 42.3 tok/s | **66.6 tok/s** | **+57%** |
+| Qwen3.6-35B MoE (ncmoe=26) | Q4_K | 28.8 tok/s | **30.9 tok/s** | **+7%** |
+
+### Key findings
+
+- **TurboQuant KV is net-negative** on CMP 90HX — KV dequant uses throttled FP32 FFMA.
+  Always use `-ctk f16 -ctv f16`.
+- **NextN speculative decoding**: neutral for dense models, +7.6% for large MoE targets
+  (Qwen3.6-35B at ncmoe=28).
+- **Patch speedup scales with GPU weight fraction**: the 35B MoE model with
+  ~56% of experts on CPU sees only +7% vs +57–87% for fully GPU-resident models.
+
+### Build
+
+```bash
+cmake -B build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=86
+cmake --build build -j$(nproc) --target llama-bench llama-server
+```
+
+---
+
 # Atomic llama.cpp
 
 ![atomic llama](https://github.com/AtomicBot-ai/.github/raw/main/assets/atomic%20llama.png)
