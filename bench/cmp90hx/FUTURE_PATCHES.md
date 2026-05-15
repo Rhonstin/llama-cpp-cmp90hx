@@ -12,42 +12,29 @@ Ranked by estimated impact and implementation difficulty.
 | FP32 dequant → HFMA2, Q4_K decode | ✅ done (`vecdotq.cuh`) |
 | FP32 dequant → HFMA2, Q5_K decode | ✅ done (`vecdotq.cuh`) |
 | Flash attention DKQ=512 crash | ✅ fixed (`fattn.cu`) |
+| FP32 dequant → HFMA2, Q6_K decode | ✅ done (`vecdotq.cuh`) |
+| FP32 dequant → HFMA2, Q2_K decode | ✅ done (`vecdotq.cuh`) |
+
+**Tier 1 result**: +4.2% on Qwen3.6-35B Q4_K_M (ncmoe=26): 30.85 → 32.15 tok/s.
+Negligible on Q4_K_XL or Q5_K-heavy models (those layers already patched).
 
 ---
 
-## Tier 1 — Easy (same pattern as existing patches, ~30–60 min each)
+## Tier 1 — Easy (same pattern as existing patches, ~30–60 min each) ✅ DONE
 
-### 1a. Q6_K decode HFMA2 — `vec_dot_q6_K_q8_1_impl_mmvq`
+### 1a. Q6_K decode HFMA2 — `vec_dot_q6_K_q8_1_impl_mmvq` ✅
 
-**File**: `ggml/src/ggml-cuda/vecdotq.cuh` ~line 669  
-**Impact**: models quantized at Q6_K (e.g. `UD-Q6_K_XL` variants)
+**File**: `ggml/src/ggml-cuda/vecdotq.cuh`  
+**Implementation notes**: QR6_K=2 — manually unrolled both iterations into two half2 lanes.
+Includes `d` (block scale) in the `h2_coeff = d * d8 * sc` product to keep fp16 intermediates
+in range (mirrors dm4/dm5 in Q4K/Q5K). Returns `r.x + r.y` — `d` is already accumulated.
 
-```cpp
-// Current — FP32 FFMA (throttled 14×):
-float sumf = 0.0f;
-for (int i = 0; i < QR6_K; ++i) {
-    sumf += d8[i] * (ggml_cuda_dp4a(vi, u[i], 0) * sc);
-}
-return d * sumf;
+### 1b. Q2_K decode HFMA2 — `vec_dot_q2_K_q8_1_impl_mmvq` ✅
 
-// Patch — same HFMA2 pattern as q4_K/q5_K:
-#if __CUDA_ARCH__ == 860
-    __half2 sumf = __float2half2_rn(0.0f);
-    for (int i = 0; i < QR6_K; ++i) {
-        const float dot = ggml_cuda_dp4a(vi, u[i], 0) * sc;
-        sumf = __hfma2(__float2half2_rn(d8[i]), __float2half2_rn(dot), sumf);
-    }
-    const float2 sumf2 = __half22float2(sumf);
-    return d * (sumf2.x + sumf2.y);
-#else
-    // original code
-#endif
-```
-
-### 1b. Q2_K decode HFMA2 — `vec_dot_q2_K_q8_1_impl_mmvq`
-
-**File**: `ggml/src/ggml-cuda/vecdotq.cuh` ~line 364  
-Two FP32 accumulators (`sumf_d`, `sumf_m`) → convert to `__half2`.
+**File**: `ggml/src/ggml-cuda/vecdotq.cuh`  
+Followed exact Q4K/Q5K pattern: `sumf_d` → lane 0, `sumf_m` → lane 1.
+`sc_m` (min scale) is already baked into `dot_m = dp4a(m_broadcast, u, 0)`, so
+lane 1 coefficient is `dm2.y * 1 * d8[i]` (no extra scale factor for lane 1).
 
 ---
 

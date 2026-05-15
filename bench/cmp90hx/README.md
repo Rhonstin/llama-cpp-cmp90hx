@@ -97,11 +97,15 @@ All benchmarks on CMP 90HX (sm_86, 9877 MiB), `-fa 1`, `tg50`, `-r 5`.
 |---|---|---:|---:|---:|---:|
 | **Qwen3.5-9B** (dense, 5.8 GiB) | Q4_K_XL | 100% | 30.40 | **56.92** | **+87%** |
 | **gemma4 E4B** (dense, 6.2 GiB) | Q5_K | 100% | 42.27 | **66.57** | **+57%** |
-| **Qwen3.6-35B-A3B** (MoE, ncmoe=26) | Q4_K | ~44% | 28.83 | **30.85** | **+7%** |
+| **Qwen3.6-35B-A3B** (MoE, ncmoe=26) | Q4_K_M | ~44% | 28.83 | **32.15** | **+11.5%** |
 
 Speedup scales with the fraction of weights on GPU: patches only fire on
 GPU-resident tensors. The 35B MoE model at `ncmoe=26` has ~56% of its expert
 weights on CPU, so the effective gain is proportionally smaller.
+
+The 35B Q4_K_M figure includes both IMAD+HFMA2 (Q4/Q5) and the Tier 1 Q6_K/Q2_K
+HFMA2 patches — the Q4_K_M mix uses Q6_K for attention layers that remain
+GPU-resident even when expert FFN layers are offloaded to CPU.
 
 ### TurboQuant KV cache — avoid on CMP 90HX
 

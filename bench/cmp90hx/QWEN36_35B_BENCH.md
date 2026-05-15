@@ -40,12 +40,13 @@
 
 ## Patch Comparison — Q4_K_M, ncmoe=26
 
-`-ngl 999 -ncmoe 26 -fa 1 -p 0 -n 50 -r 3`
+`-ngl 999 -ncmoe 26 -fa 1 -p 0 -n 50 -r 3` (r=5 for Tier 1)
 
 | Build | KV | tok/s | vs clean |
 |---|---|---:|---:|
 | Clean (`0a635dcd9`) | f16 | 28.83 ± 0.11 | — |
-| **Patched (IMAD+HFMA2)** | **f16** | **30.85 ± 0.22** | **+7.0%** |
+| Patched (IMAD+HFMA2) | f16 | 30.85 ± 0.22 | +7.0% |
+| **Patched + Q6_K/Q2_K HFMA2** | **f16** | **32.15 ± 0.57** | **+11.5%** |
 | Patched | turbo3 | 30.38 ± 0.21 | +5.4% |
 
 ## NextN Speculative Decoding — Q4_K_XL_MTP, ncmoe=28 (server)
