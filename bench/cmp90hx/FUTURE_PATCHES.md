@@ -40,10 +40,11 @@ lane 1 coefficient is `dm2.y * 1 * d8[i]` (no extra scale factor for lane 1).
 
 ## Tier 2 — Medium complexity, high impact (2–8 hours)
 
-> **Status**: Implemented and benchmarked — no measurable gain at tg50 (50-token context).
-> Flash attention KQ accumulation is <1% of decode compute at short contexts, so replacing
-> 2 throttled FP32 FADDs with 1 HFMA2 cannot move tok/s. Both 2a and 2b reverted.
-> Worth revisiting for long-context inference (pp or tg with 2k+ tokens in KV cache).
+> **Status**: Implemented and benchmarked at 50, 65k, and 125k token contexts.
+> No measurable gain at any context length. The bottleneck on CMP 90HX is not FA compute
+> but memory bandwidth and warp-level scheduling — f16 KV tg speed is flat from 50 to 125k
+> tokens (55.91–55.98 tok/s). Patch 2b (KQ_acc half2) causes −1.3% regression at short ctx;
+> 2a reverted. Patch 2b left in `fattn-tile.cuh` (uncommitted) for future reference.
 
 ### 2a. `ggml_cuda_mad(float, half2, half2)` — eliminate final FP32 FFMA
 

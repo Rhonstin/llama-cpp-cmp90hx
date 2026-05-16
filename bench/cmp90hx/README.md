@@ -107,11 +107,14 @@ The 35B Q4_K_M figure includes both IMAD+HFMA2 (Q4/Q5) and the Tier 1 Q6_K/Q2_K
 HFMA2 patches — the Q4_K_M mix uses Q6_K for attention layers that remain
 GPU-resident even when expert FFN layers are offloaded to CPU.
 
-### TurboQuant KV cache — avoid on CMP 90HX
+### TurboQuant KV cache — throughput cost, but doubles context capacity
 
 On normal GPUs, KV quantization trades compute for memory bandwidth. On CMP 90HX
 the GPU is compute-bound (FFMA throttled 14×), so KV dequant in Flash Attention
-costs more than the bandwidth it saves:
+costs more than the bandwidth it saves — but the 2–5× smaller KV cache doubles
+the usable context window, which may justify the throughput penalty.
+
+**Short context (tg50) penalty:**
 
 | Model | f16 tok/s | turbo3 tok/s | Delta |
 |---|---:|---:|---:|
@@ -119,7 +122,20 @@ costs more than the bandwidth it saves:
 | Qwen3.5-9B | 56.92 | 55.08 | **−3.2%** |
 | Qwen3.6-35B (ncmoe=26) | 30.85 | 30.38 | **−1.5%** |
 
-**Always use `-ctk f16 -ctv f16` on CMP 90HX.**
+**Long context (Qwen3.5-9B, tg50 after full prefill):**
+
+| KV type | 65k ctx tok/s | 125k ctx tok/s | vs f16 |
+|---|---:|---:|---:|
+| f16 | 55.98 | 55.91 | baseline |
+| turbo3 | 54.26 | 50.45 | **−3% / −10%** |
+| q4_0 | — | 55.91 | ≈ f16 |
+
+CMP 90HX has enough VRAM bandwidth to sustain f16 KV at 125k context with no
+throughput loss — tg speed is flat from 50 to 131k tokens. Turbo3 dequant
+overhead grows with context, reaching −10% at 125k.
+
+**Recommendation**: use `-ctk f16 -ctv f16` for best throughput; use turbo3
+only when context window (not speed) is the limiting factor.
 
 ### NextN speculative decoding
 
