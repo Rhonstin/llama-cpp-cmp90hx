@@ -40,6 +40,11 @@ lane 1 coefficient is `dm2.y * 1 * d8[i]` (no extra scale factor for lane 1).
 
 ## Tier 2 — Medium complexity, high impact (2–8 hours)
 
+> **Status**: Implemented and benchmarked — no measurable gain at tg50 (50-token context).
+> Flash attention KQ accumulation is <1% of decode compute at short contexts, so replacing
+> 2 throttled FP32 FADDs with 1 HFMA2 cannot move tok/s. Both 2a and 2b reverted.
+> Worth revisiting for long-context inference (pp or tg with 2k+ tokens in KV cache).
+
 ### 2a. `ggml_cuda_mad(float, half2, half2)` — eliminate final FP32 FFMA
 
 **File**: `ggml/src/ggml-cuda/common.cuh` ~line 745  
@@ -131,9 +136,12 @@ Medium impact, low risk.
 
 ## Recommended next steps
 
-1. **Q6_K HFMA2** (1a) — easy win, same pattern already proven to work
-2. **`ggml_cuda_mad` patch** (2a) — simple, low risk, helps all f16-KV flash attention
-3. **KQ_acc float→half2** (2b) — validate on Qwen3.5-9B first (small model, easy to catch overflow); if stable, enables turbo3 KV
+1. ~~**Q6_K HFMA2** (1a)~~ — ✅ done
+2. ~~**`ggml_cuda_mad` patch** (2a)~~ — attempted, negligible at short context
+3. ~~**KQ_acc float→half2** (2b)~~ — attempted, -1.3% regression at tg50; <1% of compute
+4. **Prefill GEMM** (3a) — largest remaining opportunity; CMP 90HX prefill is currently catastrophically slow
+5. **ROPE half2** (3c) — straightforward, medium impact on prefill
 
-The combination of 2a + 2b + 2c would flip turbo3 KV from −6.8% to a potential gain,
-recovering VRAM without throughput penalty.
+For decode, Tier 1 patches captured the bulk of the available gains. Further decode improvements
+require either long-context workloads (where Tier 2 KQ patches would matter) or new quantization
+types with untouched FP32 paths.
