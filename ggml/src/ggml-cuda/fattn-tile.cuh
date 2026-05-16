@@ -468,7 +468,7 @@ static __device__ __forceinline__ void flash_attn_tile_load_tile(
 
 // Function that performs a single iteration in for the KQ matrix multiplication:
 template <int warp_size, int nwarps, int ncols1, int ncols2, int DKQ, int nbatch_fa, int nbatch_K,
-    bool use_logit_softcap, bool oob_check, typename T_vec_dot>
+    bool use_logit_softcap, bool oob_check, typename T_vec_dot, typename T_KQ_acc>
 static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
         T_vec_dot   * const Q_tmp,
         const half2 * const __restrict__ K_h2,
@@ -477,7 +477,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter_KQ(
         const int k_VKQ_0,
         const int k_VKQ_sup,
         const int k_KQ_0,
-        float * KQ_acc) {
+        T_KQ_acc * KQ_acc) {
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
@@ -588,7 +588,11 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
         KQ_max_new[jc0] = KQ_max[jc0];
     }
 
+#if __CUDA_ARCH__ == 860 && defined(FAST_FP16_AVAILABLE)
+    half2 KQ_acc[nbatch_fa/(np*warp_size) * cpw] = {__float2half2_rn(0.0f)}; // Accumulators for KQ matrix multiplication.
+#else
     float KQ_acc[nbatch_fa/(np*warp_size) * cpw] = {0.0f}; // Accumulators for KQ matrix multiplication.
+#endif
 
     // KQ = K @ Q matrix multiplication:
     constexpr int nbatch_K_last = DKQ % nbatch_K;
@@ -603,6 +607,17 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
             Q_tmp, K_h2, KV_tmp, stride_K2, k_VKQ_0, k_VKQ_sup, k_KQ_0, KQ_acc);
     }
 
+#if __CUDA_ARCH__ == 860 && defined(FAST_FP16_AVAILABLE)
+    // Convert half2 KQ accumulators to float for post-processing.
+    float KQ_acc_f[nbatch_fa/(np*warp_size) * cpw];
+#pragma unroll
+    for (int idx = 0; idx < nbatch_fa/(np*warp_size) * cpw; ++idx) {
+        KQ_acc_f[idx] = __half2float(__low2half(KQ_acc[idx])) + __half2float(__high2half(KQ_acc[idx]));
+    }
+#else
+    float (&KQ_acc_f)[nbatch_fa/(np*warp_size) * cpw] = KQ_acc;
+#endif
+
     // Apply logit softcap + mask, update KQ_max:
 #pragma unroll
     for (int jc0 = 0; jc0 < cpw; ++jc0) {
@@ -615,18 +630,18 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 #if defined(FAST_FP16_AVAILABLE) && !defined(V_DOT2_F32_F16_AVAILABLE)
             // Without the v_dot2_f32_f16 instruction there is a higher risk of numerical overflow in the KQ calculation.
             // Therefore, scale down Q values and apply the inverse scale the FP32 KQ values afterwards again.
-            KQ_acc[i_KQ_0/(np*warp_size)*cpw + jc0] *= 4.0f;
+            KQ_acc_f[i_KQ_0/(np*warp_size)*cpw + jc0] *= 4.0f;
 #endif // defined(FAST_FP16_AVAILABLE) && !defined(V_DOT2_F32_F16_AVAILABLE)
 
             if (use_logit_softcap) {
-                KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] = logit_softcap * tanhf(KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0]);
+                KQ_acc_f[(i_KQ_0/(np*warp_size))*cpw + jc0] = logit_softcap * tanhf(KQ_acc_f[(i_KQ_0/(np*warp_size))*cpw + jc0]);
             }
 
             if (!oob_check || i_KQ < k_VKQ_sup) {
-                KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] += (ncols2 > 1 || mask) ?
+                KQ_acc_f[(i_KQ_0/(np*warp_size))*cpw + jc0] += (ncols2 > 1 || mask) ?
                     slope*__half2float(mask[j*stride_mask + k_VKQ_0 + i_KQ]) : 0.0f;
 
-                KQ_max_new[jc0] = fmaxf(KQ_max_new[jc0], KQ_acc[(i_KQ_0/(np*warp_size))*cpw + jc0] + FATTN_KQ_MAX_OFFSET);
+                KQ_max_new[jc0] = fmaxf(KQ_max_new[jc0], KQ_acc_f[(i_KQ_0/(np*warp_size))*cpw + jc0] + FATTN_KQ_MAX_OFFSET);
             }
         }
 
@@ -666,7 +681,7 @@ static __device__ __forceinline__ void flash_attn_tile_iter(
 #pragma unroll
             for (int i0 = 0; i0 < nbatch_fa; i0 += np*warp_size) {
                 const float val = !oob_check || i0 + (threadIdx.y % np)*warp_size + threadIdx.x < static_cast<uint32_t>(k_VKQ_sup) ?
-                    expf(KQ_acc[(i0/(np*warp_size))*cpw + jc] - KQ_max[jc]) : 0.0f;
+                    expf(KQ_acc_f[(i0/(np*warp_size))*cpw + jc] - KQ_max[jc]) : 0.0f;
                 KQ_sum_add += val;
                 tmp[i0/(np*warp_size)][jc1] = val;
             }
